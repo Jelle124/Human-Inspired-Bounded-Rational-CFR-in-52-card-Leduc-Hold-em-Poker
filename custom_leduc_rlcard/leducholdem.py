@@ -4,7 +4,7 @@ import numpy as np
 from collections import OrderedDict
 import rlcard
 from rlcard.envs import Env
-from BNAIC_paper_files.custom_leduc_rlcard import Game
+from . import Game
 from rlcard.utils import *
 
 DEFAULT_GAME_CONFIG = {

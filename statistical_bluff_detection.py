@@ -1,3 +1,4 @@
+import random
 import numpy as np
 from collections import defaultdict, Counter
 import json
@@ -721,7 +722,7 @@ def run_statistical_analysis_both_players(log_path):
 
 # Main execution
 if __name__ == "__main__":
-    log_path = r'C:\Users\zaket\PycharmProjects\Thesis\BNAIC_paper_results\simultaneous_Evaluation_100K\evaluation_game_logs_all_100K.jsonl'
+    from config import LOG_ALL_PATH as log_path
 
     dqn_results, cfr_results = run_statistical_analysis_both_players(log_path)
 

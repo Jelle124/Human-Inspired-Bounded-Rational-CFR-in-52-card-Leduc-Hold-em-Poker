@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+results
+*.pt
+*.pkl
+*.jsonl

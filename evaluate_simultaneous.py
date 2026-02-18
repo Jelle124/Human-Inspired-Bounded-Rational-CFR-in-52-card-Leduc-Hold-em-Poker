@@ -8,20 +8,16 @@ from rlcard.utils import set_seed
 from rlcard.envs.registration import register
 
 # Import custom environment
-from BNAIC_paper_files.custom_leduc_rlcard.leducholdem import LeducholdemEnv
+from custom_leduc_rlcard.leducholdem import LeducholdemEnv
 
 # Register the custom environment
 register(env_id="custom-leduc-holdem",
-         entry_point="BNAIC_paper_files.custom_leduc_rlcard.leducholdem:LeducholdemEnv")
+         entry_point="custom_leduc_rlcard.leducholdem:LeducholdemEnv")
 
-NUM_GAMES = 100_000
+from config import EVAL_GAMES as NUM_GAMES, EVAL_DIR as SAVE_DIR, CFR_MODEL_PATH, DQN_MODEL_PATH
+from config import LOG_ALL_PATH, LOG_CFR_PATH, LOG_DQN_PATH
+
 SEED = 42
-SAVE_DIR = r'C:\Users\zaket\PycharmProjects\Thesis\BNAIC_paper_results\simultaneous_Evaluation_100K'
-CFR_MODEL_PATH = r"C:\Users\zaket\PycharmProjects\Thesis\BNAIC_paper_results\simultaneous_Training_100K\cfr_simultaneous_100K.pkl"
-DQN_MODEL_PATH = r"C:\Users\zaket\PycharmProjects\Thesis\BNAIC_paper_results\simultaneous_Training_100K\dqn_simultaneous_100K.pt"
-LOG_ALL_PATH = os.path.join(SAVE_DIR, 'evaluation_game_logs_all_100K.jsonl')
-LOG_CFR_PATH = os.path.join(SAVE_DIR, 'evaluation_game_logs_cfr_pov_100K.jsonl')
-LOG_DQN_PATH = os.path.join(SAVE_DIR, 'evaluation_game_logs_dqn_pov_100K.jsonl')
 
 
 # Helper Classes & Functions

@@ -10,32 +10,33 @@ import numpy as np
 import collections
 
 # Import custom environment
-from BNAIC_paper_files.custom_leduc_rlcard.leducholdem import LeducholdemEnv
+from custom_leduc_rlcard.leducholdem import LeducholdemEnv
 
 # Register the custom environment
 register(env_id="custom-leduc-holdem",
-         entry_point="BNAIC_paper_files.custom_leduc_rlcard.leducholdem:LeducholdemEnv")
+         entry_point="custom_leduc_rlcard.leducholdem:LeducholdemEnv")
 
 # === Config and Paths ===
-SAVE_DIR = r'C:\Users\zaket\PycharmProjects\Thesis\BNAIC_paper_results\simultaneous_Training_100K'
+from config import TRAIN_DIR, DQN_MODEL_PATH as SAVE_DQN_PATH, CFR_MODEL_PATH as SAVE_CFR_PATH, TRAIN_EPISODES
+SAVE_DIR = TRAIN_DIR
 os.makedirs(SAVE_DIR, exist_ok=True)
-SAVE_DQN_PATH = os.path.join(SAVE_DIR, 'dqn_simultaneous_100K.pt')
-SAVE_CFR_PATH = os.path.join(SAVE_DIR, 'cfr_simultaneous_100K.pkl')
 
 wandb.init(project='BNAIC-simultaneous-training-100K', name='Simultaneous_DQN_CFR_52card_100K')
+# Paper Table 2: DQN Hyperparameters (exact replication)
 config = {
     "env": "custom-leduc-holdem-52card",
-    "train_episodes": 100_000,
+    "train_episodes": TRAIN_EPISODES,
     "eval_interval": 5_000,
     "eval_games": 2_000,
     "mlp_layers": [256, 256],
     "learning_rate": 0.00005,
     "batch_size": 64,
-    "epsilon_decay_steps": 50_000,
+    "epsilon_decay_steps": 10_000,   # Paper Table 2
     "epsilon_end": 0.05,
-    "memory_init_size": 1000,
-    "replay_memory_size": 100_000,
-    "iterations_per_episode": 10,
+    "memory_init_size": 500,          # Paper: Replay Memory Init Size
+    "replay_memory_size": 20_000,     # Paper: Replay Memory Size
+    "update_target_every": 1_000,     # Paper: Update Target Estimator Every
+    "iterations_per_episode": 10,     # Paper: CFR iterations per episode
     "seed": 42,
     "deck_size": 52,
     "state_dim": 156,
@@ -175,6 +176,7 @@ def train():
         epsilon_decay_steps=config['epsilon_decay_steps'],
         replay_memory_init_size=config['memory_init_size'],
         replay_memory_size=config['replay_memory_size'],
+        update_target_estimator_every=config['update_target_every'],
         device=device
     )
 

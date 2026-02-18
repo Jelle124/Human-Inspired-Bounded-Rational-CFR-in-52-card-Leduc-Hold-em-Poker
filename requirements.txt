@@ -1,0 +1,16 @@
+# Bluffing by DQN and CFR in Leduc Hold'em - Dependencies
+# Compatible with Python 3.8+
+# Uses CPU-only PyTorch for laptops (no CUDA) - add --index-url for CPU: see below
+
+# Core ML & RL (install CPU torch first to avoid 2GB+ CUDA download)
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Then: pip install -r requirements.txt
+torch>=1.9.0,<3.0
+rlcard[torch]>=0.2.0
+
+# Numerical & visualization
+numpy>=1.19.0
+matplotlib>=3.3.0
+
+# Experiment tracking (optional - set WANDB_MODE=disabled to skip)
+wandb>=0.12.0
