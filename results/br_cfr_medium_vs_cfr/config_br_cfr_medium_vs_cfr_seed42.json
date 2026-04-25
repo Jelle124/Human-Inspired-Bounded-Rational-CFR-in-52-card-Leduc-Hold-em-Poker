@@ -1,0 +1,25 @@
+{
+  "experiment": "br_cfr_medium_vs_cfr",
+  "setup": "br_vs_cfr",
+  "seed": 42,
+  "train_episodes": 100000,
+  "eval_games": 100000,
+  "eval_interval": 10000,
+  "checkpoint_eval_games": 2000,
+  "deck_size": 50,
+  "state_dim": 156,
+  "br_preset": {
+    "iterations_per_episode": 5,
+    "memory_decay": 0.999,
+    "soft_regret_tau": 0.5,
+    "bucket_mode": "coarse",
+    "qre_normalize_regrets": true,
+    "qre_norm_epsilon": 1e-08,
+    "mood_enabled": true,
+    "mood_rho": 0.95,
+    "mood_behind_raise_coef": 0.2,
+    "mood_ahead_raise_coef": 0.1,
+    "mood_tanh_scale": 4.0,
+    "tilt_enabled": false
+  }
+}

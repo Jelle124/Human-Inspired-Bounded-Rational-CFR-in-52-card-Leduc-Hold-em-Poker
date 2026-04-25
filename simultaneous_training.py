@@ -17,7 +17,13 @@ register(env_id="custom-leduc-holdem",
          entry_point="custom_leduc_rlcard.leducholdem:LeducholdemEnv")
 
 # === Config and Paths ===
-from config import TRAIN_DIR, DQN_MODEL_PATH as SAVE_DQN_PATH, CFR_MODEL_PATH as SAVE_CFR_PATH, TRAIN_EPISODES
+from config import (
+    TRAIN_DIR,
+    DQN_MODEL_PATH as SAVE_DQN_PATH,
+    CFR_MODEL_PATH as SAVE_CFR_PATH,
+    TRAIN_EPISODES,
+    TRAINING_WIN_RATES_JSONL,
+)
 SAVE_DIR = TRAIN_DIR
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -164,6 +170,13 @@ def train():
         print(f"RANK_ORDER: {list(env.game.judger.RANK_ORDER.keys())}")
     print("=" * 70)
 
+    # Fresh local log for this run (same metrics as wandb eval checkpoints)
+    try:
+        with open(TRAINING_WIN_RATES_JSONL, "w", encoding="utf-8"):
+            pass
+    except OSError as e:
+        print(f"Warning: could not init {TRAINING_WIN_RATES_JSONL}: {e}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     dqn_agent = DQNAgent(
@@ -247,6 +260,18 @@ def train():
                     "training_progress": episode / config['train_episodes'],  # ADDED: Progress tracking
                     "episode": episode
                 })
+
+                try:
+                    with open(TRAINING_WIN_RATES_JSONL, "a", encoding="utf-8") as wf:
+                        wf.write(json.dumps({
+                            "episode": int(episode),
+                            "dqn_win_rate_vs_cfr": float(dqn_wr),
+                            "cfr_win_rate_vs_dqn": float(cfr_wr),
+                            "draw_rate": float(draw_rate),
+                            "eval_games": int(config["eval_games"]),
+                        }) + "\n")
+                except OSError as e:
+                    print(f"Warning: could not append win rates to {TRAINING_WIN_RATES_JSONL}: {e}")
 
                 print(f"[Ep {episode:,}/{config['train_episodes']:,}] "
                       f"DQN WR: {dqn_wr:.3f} | CFR WR: {cfr_wr:.3f} | "

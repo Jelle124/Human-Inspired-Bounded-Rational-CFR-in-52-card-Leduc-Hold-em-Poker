@@ -10,7 +10,8 @@ np.random.seed(SEED)
 random.seed(SEED)
 
 # === Configs ===
-from config import LOG_ALL_PATH as LOG_PATH
+from config import LOG_ALL_PATH
+LOG_PATH = os.environ.get("BLUFF_LOG_PATH") or LOG_ALL_PATH
 DQN_PLAYER_ID = 0  # DQN is the Bluffer
 PROJECT_NAME = 'BNAIC-bluff-analysis-52card'
 RUN_NAME = 'CFR_Reaction_to_DQN_Bluffs_52Card_Leduc_CLEAR_LABELS'

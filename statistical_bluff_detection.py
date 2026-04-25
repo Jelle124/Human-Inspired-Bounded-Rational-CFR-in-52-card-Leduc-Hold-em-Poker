@@ -722,7 +722,8 @@ def run_statistical_analysis_both_players(log_path):
 
 # Main execution
 if __name__ == "__main__":
-    from config import LOG_ALL_PATH as log_path
+    from config import LOG_ALL_PATH
+    log_path = os.environ.get("BLUFF_LOG_PATH", LOG_ALL_PATH)
 
     dqn_results, cfr_results = run_statistical_analysis_both_players(log_path)
 
