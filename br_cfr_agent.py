@@ -1,9 +1,9 @@
 """
 Bounded-Rational CFR (BR-CFR) Agent.
 
-This module implements "dumber" CFR variants by deliberately restricting
-information, computation, or memory. It is SEPARATE from the replication
-code (simultaneous_training.py, CFRAgainstDQNAgent).
+Implements bounded-rational CFR variants by restricting computation, memory,
+perception (state bucketing), and session dynamics (mood/tilt). Used by
+`train_parallel_suite.py` via `BRCFRWrapper` and `BRCFRAgainstOpponentAgent`.
 
 Implementations:
   A) Fewer iterations - limited computation
@@ -11,14 +11,14 @@ Implementations:
   C) Soft regret matching - quantal response / noisy choice
   D) State bucketing - coarse perception
   E) Mood + tilt — session reference dependence and episodic loss-of-control
-     (see deep-research-report (1).md)
 
-See br_cfr_config.py for parameter motivations and README_BR_CFR.md for
-full documentation.
+See `br_cfr_config.py` and `br_cfr_variant_specs.py` for parameters.
 """
 
 import pickle
 import collections
+from typing import Any, Optional
+
 import numpy as np
 
 
@@ -136,6 +136,12 @@ class MoodTiltSession:
         tilt_raise_extra_logit=0.60,
         tilt_regret_flatten_mult=0.55,
         tilt_uniform_mix=0.08,
+        tilt_trigger_probability: float = 1.0,
+        tilt_mood_threshold: Optional[float] = None,
+        tilt_cooldown_hands: int = 0,
+        tilt_refresh_while_active: bool = True,
+        tilt_reset_loss_streak_on_trigger: bool = False,
+        session_telemetry_enabled=False,
     ):
         self.mood_enabled = bool(mood_enabled)
         self.mood_rho = float(mood_rho)
@@ -146,15 +152,24 @@ class MoodTiltSession:
         self.tilt_loss_streak_k = int(tilt_loss_streak_k)
         self.tilt_shock_payoff = float(tilt_shock_payoff)
         self.tilt_duration_hands = int(tilt_duration_hands)
+        self.tilt_trigger_probability = float(tilt_trigger_probability)
+        self.tilt_mood_threshold: Optional[float] = (
+            float(tilt_mood_threshold) if tilt_mood_threshold is not None else None
+        )
+        self.tilt_cooldown_hands = int(tilt_cooldown_hands)
+        self.tilt_refresh_while_active = bool(tilt_refresh_while_active)
+        self.tilt_reset_loss_streak_on_trigger = bool(tilt_reset_loss_streak_on_trigger)
         self.tilt_tau_multiplier = float(tilt_tau_multiplier)
         self.tilt_min_soft_tau = float(tilt_min_soft_tau)
         self.tilt_raise_extra_logit = float(tilt_raise_extra_logit)
         self.tilt_regret_flatten_mult = float(tilt_regret_flatten_mult)
         self.tilt_uniform_mix = float(tilt_uniform_mix)
+        self.session_telemetry_enabled = bool(session_telemetry_enabled)
 
         self.mood_m = 0.0
         self.loss_streak = 0
         self.tilt_hands_remaining = 0
+        self.tilt_cooldown_remaining = 0
 
     def any_enabled(self):
         return self.mood_enabled or self.tilt_enabled
@@ -162,26 +177,122 @@ class MoodTiltSession:
     def tilt_active(self):
         return bool(self.tilt_enabled and self.tilt_hands_remaining > 0)
 
-    def hand_end(self, payoff: float):
-        """Call after each completed hand with this agent's chip payoff."""
+    def reset(self):
+        """Reset running session state (mood, streaks, tilt timer) for a fresh match."""
+        self.mood_m = 0.0
+        self.loss_streak = 0
+        self.tilt_hands_remaining = 0
+        self.tilt_cooldown_remaining = 0
+
+    def hand_end(self, payoff: float, *, base_soft_regret_tau: Optional[float] = None) -> Optional[dict[str, Any]]:
+        """
+        Call after each completed hand with this agent's chip payoff.
+
+        When ``session_telemetry_enabled`` is True, returns a JSON-serializable dict
+        describing pre/post state and triggers (for the traversal that just ended,
+        modulation used ``tilt_active`` / mood **before** this update). Otherwise
+        returns None. Pass ``base_soft_regret_tau`` for effective-tau logging.
+        """
+        payoff_f = float(payoff)
+        base_tau = float(base_soft_regret_tau) if base_soft_regret_tau is not None else 0.0
+
         had_tilt = self.tilt_hands_remaining > 0
+        tilt_active_before = self.tilt_active()
+        mood_m_before = float(self.mood_m)
+        loss_streak_before = int(self.loss_streak)
+        tilt_hands_rem_before = int(self.tilt_hands_remaining)
+        cooldown_before = int(self.tilt_cooldown_remaining)
+
+        tau_used = float(self.effective_tau(base_tau))
+        regret_scale_used = float(self.regret_flatten_scale())
+        raise_bonus_used = float(self.raise_logit_bonus())
+        uniform_mix_used = float(self.tilt_uniform_mix) if tilt_active_before else 0.0
+
         if self.mood_enabled:
-            self.mood_m = self.mood_rho * self.mood_m + float(payoff)
-        trigger = False
+            self.mood_m = self.mood_rho * self.mood_m + payoff_f
+
+        trigger_streak = False
+        trigger_shock = False
+        trigger_mood = False
         if self.tilt_enabled:
-            if payoff < 0:
+            if payoff_f < 0:
                 self.loss_streak += 1
             else:
                 self.loss_streak = 0
-            if (
-                self.loss_streak >= self.tilt_loss_streak_k
-                or float(payoff) <= self.tilt_shock_payoff
-            ):
-                trigger = True
-        if trigger:
+            trigger_streak = self.loss_streak >= self.tilt_loss_streak_k
+            trigger_shock = payoff_f <= self.tilt_shock_payoff
+            if self.mood_enabled and self.tilt_mood_threshold is not None:
+                trigger_mood = float(self.mood_m) <= float(self.tilt_mood_threshold)
+
+        raw_eligible = trigger_streak or trigger_shock or trigger_mood
+        if not (self.tilt_enabled and raw_eligible):
+            prob_pass = True
+        else:
+            tp = float(self.tilt_trigger_probability)
+            if tp >= 1.0:
+                prob_pass = True
+            elif tp <= 0.0:
+                prob_pass = False
+            else:
+                prob_pass = bool(np.random.random() < tp)
+
+        can_trigger = (
+            self.tilt_enabled
+            and raw_eligible
+            and prob_pass
+            and self.tilt_cooldown_remaining == 0
+        )
+
+        tilt_duration_applied = False
+        if can_trigger and (not had_tilt or self.tilt_refresh_while_active):
             self.tilt_hands_remaining = self.tilt_duration_hands
+            tilt_duration_applied = True
+            if self.tilt_reset_loss_streak_on_trigger:
+                self.loss_streak = 0
         elif had_tilt:
             self.tilt_hands_remaining = max(0, self.tilt_hands_remaining - 1)
+
+        tilt_ended = tilt_hands_rem_before > 0 and self.tilt_hands_remaining == 0
+        skip_cooldown_tick = False
+        if tilt_ended and self.tilt_cooldown_hands > 0:
+            self.tilt_cooldown_remaining = self.tilt_cooldown_hands
+            skip_cooldown_tick = True
+
+        if (
+            not self.tilt_active()
+            and self.tilt_cooldown_remaining > 0
+            and not skip_cooldown_tick
+        ):
+            self.tilt_cooldown_remaining -= 1
+
+        if not self.session_telemetry_enabled:
+            return None
+
+        return {
+            "payoff": payoff_f,
+            "mood_m_before": mood_m_before,
+            "mood_m_after": float(self.mood_m),
+            "loss_streak_before": loss_streak_before,
+            "loss_streak_after": int(self.loss_streak),
+            "tilt_hands_rem_before": tilt_hands_rem_before,
+            "tilt_hands_rem_after": int(self.tilt_hands_remaining),
+            "tilt_active_before": tilt_active_before,
+            "tilt_active_after": self.tilt_active(),
+            "had_tilt_carryover": bool(had_tilt),
+            "trigger_loss_streak": bool(trigger_streak),
+            "trigger_shock": bool(trigger_shock),
+            "trigger_mood": bool(trigger_mood),
+            "raw_eligible": bool(raw_eligible),
+            "prob_pass": bool(prob_pass),
+            "tilt_cooldown_rem_before": cooldown_before,
+            "tilt_cooldown_rem_after": int(self.tilt_cooldown_remaining),
+            "triggered_refresh": bool(tilt_duration_applied),
+            "base_soft_regret_tau": base_tau,
+            "effective_tau_used": tau_used,
+            "regret_flatten_scale_used": regret_scale_used,
+            "raise_logit_bonus_used": raise_bonus_used,
+            "tilt_uniform_mix_used": uniform_mix_used,
+        }
 
     def effective_tau(self, base_tau: float) -> float:
         if not self.tilt_active():
@@ -247,6 +358,11 @@ class MoodTiltSession:
             "tilt_loss_streak_k": self.tilt_loss_streak_k,
             "tilt_shock_payoff": self.tilt_shock_payoff,
             "tilt_duration_hands": self.tilt_duration_hands,
+            "tilt_trigger_probability": self.tilt_trigger_probability,
+            "tilt_mood_threshold": self.tilt_mood_threshold,
+            "tilt_cooldown_hands": self.tilt_cooldown_hands,
+            "tilt_refresh_while_active": self.tilt_refresh_while_active,
+            "tilt_reset_loss_streak_on_trigger": self.tilt_reset_loss_streak_on_trigger,
             "tilt_tau_multiplier": self.tilt_tau_multiplier,
             "tilt_min_soft_tau": self.tilt_min_soft_tau,
             "tilt_raise_extra_logit": self.tilt_raise_extra_logit,
@@ -345,8 +461,14 @@ class BoundedRationalCFRAgent:
         tilt_raise_extra_logit=0.60,
         tilt_regret_flatten_mult=0.55,
         tilt_uniform_mix=0.08,
+        tilt_trigger_probability: float = 1.0,
+        tilt_mood_threshold: Optional[float] = None,
+        tilt_cooldown_hands: int = 0,
+        tilt_refresh_while_active: bool = True,
+        tilt_reset_loss_streak_on_trigger: bool = False,
         qre_normalize_regrets=False,
         qre_norm_epsilon=1e-8,
+        session_telemetry_enabled=False,
     ):
         self.env = env
         self.player_id = player_id
@@ -376,6 +498,12 @@ class BoundedRationalCFRAgent:
             tilt_raise_extra_logit=tilt_raise_extra_logit,
             tilt_regret_flatten_mult=tilt_regret_flatten_mult,
             tilt_uniform_mix=tilt_uniform_mix,
+            tilt_trigger_probability=tilt_trigger_probability,
+            tilt_mood_threshold=tilt_mood_threshold,
+            tilt_cooldown_hands=tilt_cooldown_hands,
+            tilt_refresh_while_active=tilt_refresh_while_active,
+            tilt_reset_loss_streak_on_trigger=tilt_reset_loss_streak_on_trigger,
+            session_telemetry_enabled=session_telemetry_enabled,
         )
 
         self.policy = collections.defaultdict(list)
@@ -388,7 +516,9 @@ class BoundedRationalCFRAgent:
 
     def register_hand_outcome(self, payoff: float):
         """Update mood and tilt counters after one hand (payoff for this player_id)."""
-        self.mood_tilt.hand_end(float(payoff))
+        return self.mood_tilt.hand_end(
+            float(payoff), base_soft_regret_tau=self.soft_regret_tau
+        )
 
     def _regret_matching(self, obs):
         regret = self.regrets[obs].copy()
@@ -533,7 +663,7 @@ class BRCFRWrapper:
 
     def notify_hand_end(self, payoff: float):
         """Forward session update after a full hand (same seat as this wrapper)."""
-        self.cfr.register_hand_outcome(float(payoff))
+        return self.cfr.register_hand_outcome(float(payoff))
 
     def eval_step(self, state):
         action = self.step(state)

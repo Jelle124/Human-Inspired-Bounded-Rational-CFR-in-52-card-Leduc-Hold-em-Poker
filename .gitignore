@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+venv/
+.venv/
+
+# Local notes (not for publication)
+THESIS_GITHUB_TODO.md
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Archives (upload models separately via Zenodo / GitHub Releases)
+*.zip
+*.tar.gz
+
+# ---------------------------------------------------------------------------
+# Results: include summaries (JSON/CSV), exclude large generated binaries.
+# See README.md → "What is committed to GitHub".
+# ---------------------------------------------------------------------------
+
+# Intermediate training snapshots
+results/**/checkpoints/
+archive/**/checkpoints/
+
+# Trained model weights
+results/**/models/
+results/**/*.pkl
+results/**/*.pt
+archive/**/models/
+archive/**/*.pkl
+archive/**/*.pt
+
+# Per-hand / per-trajectory logs (large)
+results/**/*.jsonl
+archive/**/*.jsonl

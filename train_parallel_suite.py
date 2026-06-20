@@ -9,7 +9,11 @@ Experiments:
 4) br_cfr_dumb_vs_cfr
 5) cfr_vs_cfr_baseline
 
-All runs initialize both agents from scratch and co-evolve (no frozen CFR).
+All runs initialize both agents from scratch and co-evolve (no frozen opponents).
+
+When a BR preset has ``tilt_enabled`` (dumb), the suite also writes per-trajectory
+and per-eval-hand mood/tilt telemetry JSONL plus a small aggregate summary JSON
+(see ``tilt_telemetry_*`` under the experiment results directory).
 """
 
 from __future__ import annotations
@@ -55,11 +59,7 @@ from br_cfr_agent import BRCFRWrapper, MoodTiltSession, obs_to_key, regret_match
 from br_cfr_variant_specs import BR_CFR_VARIANT_PARAM_TABLE
 from config import RESULTS_DIR, TRAIN_EPISODES as DEFAULT_TRAIN_EPISODES
 from custom_leduc_rlcard.leducholdem import LeducholdemEnv
-from simultaneous_training_cfr_vs_br_smart import (
-    CFRAgainstOpponentAgent,
-    CFRWrapper,
-    _OpponentSlot,
-)
+from cfr_agent import CFRAgainstOpponentAgent, CFRWrapper, _OpponentSlot
 
 RANK_ORDER = {
     "2": 0,
@@ -121,6 +121,12 @@ class BRCFRAgainstOpponentAgent(CFRAgainstOpponentAgent):
         tilt_raise_extra_logit: float = 0.60,
         tilt_regret_flatten_mult: float = 0.55,
         tilt_uniform_mix: float = 0.08,
+        tilt_trigger_probability: float = 1.0,
+        tilt_mood_threshold: float | None = None,
+        tilt_cooldown_hands: int = 0,
+        tilt_refresh_while_active: bool = True,
+        tilt_reset_loss_streak_on_trigger: bool = False,
+        session_telemetry_enabled: bool = False,
     ) -> None:
         super().__init__(env, player_id, opponent_agent, model_path)
         self.iterations_per_episode = int(iterations_per_episode)
@@ -144,6 +150,12 @@ class BRCFRAgainstOpponentAgent(CFRAgainstOpponentAgent):
             tilt_raise_extra_logit=tilt_raise_extra_logit,
             tilt_regret_flatten_mult=tilt_regret_flatten_mult,
             tilt_uniform_mix=tilt_uniform_mix,
+            tilt_trigger_probability=tilt_trigger_probability,
+            tilt_mood_threshold=tilt_mood_threshold,
+            tilt_cooldown_hands=tilt_cooldown_hands,
+            tilt_refresh_while_active=tilt_refresh_while_active,
+            tilt_reset_loss_streak_on_trigger=tilt_reset_loss_streak_on_trigger,
+            session_telemetry_enabled=session_telemetry_enabled,
         )
         self.br_cfr_params = {
             "iterations_per_episode": self.iterations_per_episode,
@@ -158,8 +170,10 @@ class BRCFRAgainstOpponentAgent(CFRAgainstOpponentAgent):
     def _obs_key(self, state: dict) -> Any:
         return obs_to_key(state, self.env, self.bucket_mode)
 
-    def register_hand_outcome(self, payoff: float) -> None:
-        self.mood_tilt.hand_end(float(payoff))
+    def register_hand_outcome(self, payoff: float):
+        return self.mood_tilt.hand_end(
+            float(payoff), base_soft_regret_tau=self.soft_regret_tau
+        )
 
     def _regret_matching(self, obs_key: Any) -> np.ndarray:
         regret = self.regrets[obs_key].copy()
@@ -251,6 +265,10 @@ class ExperimentSpec:
     out_dir_name: str
     setup: str  # dqn_vs_cfr | br_vs_cfr | cfr_vs_cfr
     br_variant: str | None = None
+    # Merged on top of BR_CFR_VARIANT_PARAM_TABLE[br_variant] for br_vs_cfr runs.
+    br_param_overrides: dict[str, Any] | None = None
+    # Optional label in training CSV / eval JSON (default: br_cfr_<variant>).
+    br_agent_display_name: str | None = None
 
 
 EXPERIMENT_SPECS: dict[str, ExperimentSpec] = {
@@ -337,6 +355,7 @@ def _evaluate_with_bluff_stats(
     agent_names: list[str],
     num_games: int,
     checkpoint_interval_games: int = 10_000,
+    eval_tilt_telemetry_jsonl: str | None = None,
 ) -> dict[str, Any]:
     env.set_agents(agents)
     wins = [0, 0, 0]
@@ -346,61 +365,76 @@ def _evaluate_with_bluff_stats(
     bluff_successes_by_agent = [0, 0]
     checkpoint_rows: list[dict[str, Any]] = []
 
-    for game_idx in range(1, num_games + 1):
-        env.reset()
-        hand_log: list[dict[str, Any]] = []
+    tilt_out = None
+    if eval_tilt_telemetry_jsonl:
+        tilt_out = open(eval_tilt_telemetry_jsonl, "w", encoding="utf-8")
 
-        while not env.is_over():
-            player_id = env.get_player_id()
-            state = env.get_state(player_id)
-            action, _ = agents[player_id].eval_step(state)
+    try:
+        for game_idx in range(1, num_games + 1):
+            env.reset()
+            hand_log: list[dict[str, Any]] = []
 
-            raw = state.get("raw_obs", {})
-            hand_log.append(
-                {
-                    "player_id": int(player_id),
-                    "action": int(action),
-                    "hand": raw.get("hand"),
-                    "public_card": raw.get("public_card"),
+            while not env.is_over():
+                player_id = env.get_player_id()
+                state = env.get_state(player_id)
+                action, _ = agents[player_id].eval_step(state)
+
+                raw = state.get("raw_obs", {})
+                hand_log.append(
+                    {
+                        "player_id": int(player_id),
+                        "action": int(action),
+                        "hand": raw.get("hand"),
+                        "public_card": raw.get("public_card"),
+                    }
+                )
+                action_counts[player_id] += 1
+                env.step(action)
+
+            payoffs = env.get_payoffs()
+            total_payoffs[0] += float(payoffs[0])
+            total_payoffs[1] += float(payoffs[1])
+
+            for pid, ag in enumerate(agents):
+                if hasattr(ag, "notify_hand_end"):
+                    rec = ag.notify_hand_end(float(payoffs[pid]))
+                    if tilt_out is not None and pid == 0 and rec:
+                        row = {"phase": "eval", "game_index": game_idx, **rec}
+                        tilt_out.write(json.dumps(_jsonable(row)) + "\n")
+
+            if payoffs[0] > payoffs[1]:
+                wins[0] += 1
+            elif payoffs[1] > payoffs[0]:
+                wins[1] += 1
+            else:
+                wins[2] += 1
+
+            for i, row in enumerate(hand_log):
+                pid = row["player_id"]
+                if _is_threshold_bluff_attempt(row["hand"], row["public_card"], row["action"]):
+                    bluff_attempts_by_agent[pid] += 1
+                    if i + 1 < len(hand_log):
+                        nxt = hand_log[i + 1]
+                        if nxt["player_id"] != pid and nxt["action"] == FOLD_ACTION:
+                            bluff_successes_by_agent[pid] += 1
+
+            if game_idx % checkpoint_interval_games == 0:
+                ck = {
+                    "games": game_idx,
+                    "agent0_win_rate": wins[0] / game_idx,
+                    "agent1_win_rate": wins[1] / game_idx,
+                    "draw_rate": wins[2] / game_idx,
+                    "agent0_avg_payoff": total_payoffs[0] / game_idx,
+                    "agent1_avg_payoff": total_payoffs[1] / game_idx,
+                    "agent0_bluff_attempts": bluff_attempts_by_agent[0],
+                    "agent1_bluff_attempts": bluff_attempts_by_agent[1],
+                    "agent0_bluff_successes": bluff_successes_by_agent[0],
+                    "agent1_bluff_successes": bluff_successes_by_agent[1],
                 }
-            )
-            action_counts[player_id] += 1
-            env.step(action)
-
-        payoffs = env.get_payoffs()
-        total_payoffs[0] += float(payoffs[0])
-        total_payoffs[1] += float(payoffs[1])
-
-        if payoffs[0] > payoffs[1]:
-            wins[0] += 1
-        elif payoffs[1] > payoffs[0]:
-            wins[1] += 1
-        else:
-            wins[2] += 1
-
-        for i, row in enumerate(hand_log):
-            pid = row["player_id"]
-            if _is_threshold_bluff_attempt(row["hand"], row["public_card"], row["action"]):
-                bluff_attempts_by_agent[pid] += 1
-                if i + 1 < len(hand_log):
-                    nxt = hand_log[i + 1]
-                    if nxt["player_id"] != pid and nxt["action"] == FOLD_ACTION:
-                        bluff_successes_by_agent[pid] += 1
-
-        if game_idx % checkpoint_interval_games == 0:
-            ck = {
-                "games": game_idx,
-                "agent0_win_rate": wins[0] / game_idx,
-                "agent1_win_rate": wins[1] / game_idx,
-                "draw_rate": wins[2] / game_idx,
-                "agent0_avg_payoff": total_payoffs[0] / game_idx,
-                "agent1_avg_payoff": total_payoffs[1] / game_idx,
-                "agent0_bluff_attempts": bluff_attempts_by_agent[0],
-                "agent1_bluff_attempts": bluff_attempts_by_agent[1],
-                "agent0_bluff_successes": bluff_successes_by_agent[0],
-                "agent1_bluff_successes": bluff_successes_by_agent[1],
-            }
-            checkpoint_rows.append(ck)
+                checkpoint_rows.append(ck)
+    finally:
+        if tilt_out is not None:
+            tilt_out.close()
 
     summary = {
         "num_games": int(num_games),
@@ -461,13 +495,6 @@ def _evaluate_with_bluff_stats(
                 else 0.0
             ),
             "by_evaluation_checkpoint": checkpoint_rows,
-        },
-        "statistical_bluff_detector_stub": {
-            "available_module": os.path.exists(
-                os.path.join(os.path.dirname(__file__), "statistical_bluff_detection.py")
-            ),
-            "enabled_in_suite": False,
-            "note": "Threshold-based bluff detector is the required implementation for this suite.",
         },
     }
     return summary
@@ -551,6 +578,43 @@ def _checkpoint_eval(
     }
 
 
+def _aggregate_tilt_telemetry_jsonl(path: str) -> dict[str, Any]:
+    """Scan a tilt telemetry JSONL for coarse counters (works for large files)."""
+    agg: dict[str, Any] = {
+        "lines": 0,
+        "tilt_active_before_true": 0,
+        "triggered_refresh_true": 0,
+        "trigger_loss_streak_true": 0,
+        "trigger_shock_true": 0,
+        "sum_abs_payoff": 0.0,
+        "sum_effective_tau_used": 0.0,
+    }
+    if not os.path.isfile(path):
+        return agg
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            agg["lines"] += 1
+            if row.get("tilt_active_before"):
+                agg["tilt_active_before_true"] += 1
+            if row.get("triggered_refresh"):
+                agg["triggered_refresh_true"] += 1
+            if row.get("trigger_loss_streak"):
+                agg["trigger_loss_streak_true"] += 1
+            if row.get("trigger_shock"):
+                agg["trigger_shock_true"] += 1
+            agg["sum_abs_payoff"] += abs(float(row.get("payoff", 0.0)))
+            agg["sum_effective_tau_used"] += float(row.get("effective_tau_used", 0.0))
+    n = max(1, agg["lines"])
+    agg["fraction_tilt_active_before"] = agg["tilt_active_before_true"] / n
+    agg["mean_abs_payoff"] = agg["sum_abs_payoff"] / n
+    agg["mean_effective_tau_used"] = agg["sum_effective_tau_used"] / n
+    return agg
+
+
 def run_experiment(
     spec: ExperimentSpec,
     *,
@@ -572,13 +636,23 @@ def run_experiment(
 
     print("=" * 80)
     print(f"EXPERIMENT: {spec.name}")
-    print(f"Preset: {spec.br_variant if spec.br_variant else 'none'}")
+    if spec.br_variant:
+        _preset_line = spec.br_variant
+        if spec.br_param_overrides:
+            _preset_line = f"{spec.br_variant} + {spec.br_param_overrides}"
+        print(f"Preset: {_preset_line}")
+    else:
+        print("Preset: none")
     print(f"Deck size: {len(env_train.game.dealer.deck)}")
     print(f"State dimension: {_state_dim(env_train)}")
     print(f"Episodes: {train_episodes:,} | Eval games: {eval_games:,} | Seed: {seed}")
     print("=" * 80)
 
     training_rows: list[dict[str, Any]] = []
+    tilt_train_jsonl_path: str | None = None
+    tilt_eval_jsonl_path: str | None = None
+    tilt_summary_path: str | None = None
+    tilt_train_agg: dict[str, Any] = {}
     cfg_payload = {
         "experiment": spec.name,
         "setup": spec.setup,
@@ -591,7 +665,12 @@ def run_experiment(
         "state_dim": _state_dim(env_train),
     }
     if spec.br_variant:
-        cfg_payload["br_preset"] = BR_CFR_VARIANT_PARAM_TABLE[spec.br_variant]
+        _br_eff = dict(BR_CFR_VARIANT_PARAM_TABLE[spec.br_variant])
+        if spec.br_param_overrides:
+            cfg_payload["br_preset_table_row"] = dict(BR_CFR_VARIANT_PARAM_TABLE[spec.br_variant])
+            cfg_payload["br_preset_overrides"] = dict(spec.br_param_overrides)
+            _br_eff.update(spec.br_param_overrides)
+        cfg_payload["br_preset"] = _br_eff
 
     cfg_path = os.path.join(dirs["root"], f"config_{spec.name}_seed{seed}.json")
     _save_json(cfg_path, cfg_payload)
@@ -666,6 +745,9 @@ def run_experiment(
     elif spec.setup == "br_vs_cfr":
         assert spec.br_variant is not None
         br_params = dict(BR_CFR_VARIANT_PARAM_TABLE[spec.br_variant])
+        if spec.br_param_overrides:
+            br_params.update(spec.br_param_overrides)
+        br_display = spec.br_agent_display_name or f"br_cfr_{spec.br_variant}"
 
         cfr_model_path = os.path.join(dirs["models"], f"{spec.name}_seed{seed}_standard_cfr.pkl")
         br_model_path = os.path.join(dirs["models"], f"{spec.name}_seed{seed}_br_cfr_{spec.br_variant}.pkl")
@@ -673,23 +755,76 @@ def run_experiment(
         cfr_slot = _OpponentSlot()
         br_slot = _OpponentSlot()
         cfr = CFRAgainstOpponentAgent(env_train, player_id=1, opponent_agent=br_slot, model_path=cfr_model_path)
+        br_kwargs = dict(br_params)
+        if br_kwargs.get("tilt_enabled"):
+            br_kwargs["session_telemetry_enabled"] = True
         br = BRCFRAgainstOpponentAgent(
             env_train,
             player_id=0,
             opponent_agent=cfr_slot,
             model_path=br_model_path,
-            **br_params,
+            **br_kwargs,
         )
         cfr_slot.wrapped = CFRWrapper(cfr)
         br_slot.wrapped = BRCFRWrapper(br)
         env_train.set_agents([BRCFRWrapper(br), CFRWrapper(cfr)])
 
+        tilt_train_file = None
+        if br_params.get("tilt_enabled"):
+            tilt_train_jsonl_path = os.path.join(
+                dirs["root"], f"tilt_telemetry_training_{spec.name}_seed{seed}.jsonl"
+            )
+            tilt_eval_jsonl_path = os.path.join(
+                dirs["root"], f"tilt_telemetry_eval_{spec.name}_seed{seed}.jsonl"
+            )
+            tilt_summary_path = os.path.join(
+                dirs["root"], f"tilt_telemetry_summary_{spec.name}_seed{seed}.json"
+            )
+            tilt_train_file = open(tilt_train_jsonl_path, "w", encoding="utf-8")
+            tilt_train_agg = {
+                "spec": spec.name,
+                "seed": seed,
+                "train_episodes": train_episodes,
+                "iterations_per_episode": int(br_params["iterations_per_episode"]),
+                "mood_tilt_params": {
+                    k: br_params[k]
+                    for k in sorted(br_params)
+                    if k.startswith("tilt_") or k.startswith("mood_")
+                },
+                "training_traversals_logged": 0,
+                "tilt_active_before_true": 0,
+                "triggered_refresh_true": 0,
+                "trigger_loss_streak_true": 0,
+                "trigger_shock_true": 0,
+                "sum_abs_payoff": 0.0,
+                "sum_effective_tau_used": 0.0,
+            }
+
         for episode in range(1, train_episodes + 1):
             for _ in range(int(br_params["iterations_per_episode"])):
                 env_train.reset()
                 u_br = br.traverse_tree(np.ones(env_train.num_players))
-                br.register_hand_outcome(float(u_br[br.player_id]))
+                rec = br.register_hand_outcome(float(u_br[br.player_id]))
                 br.iteration += 1
+                if tilt_train_file is not None and rec:
+                    tilt_train_agg["training_traversals_logged"] += 1
+                    if rec["tilt_active_before"]:
+                        tilt_train_agg["tilt_active_before_true"] += 1
+                    if rec["triggered_refresh"]:
+                        tilt_train_agg["triggered_refresh_true"] += 1
+                    if rec["trigger_loss_streak"]:
+                        tilt_train_agg["trigger_loss_streak_true"] += 1
+                    if rec["trigger_shock"]:
+                        tilt_train_agg["trigger_shock_true"] += 1
+                    tilt_train_agg["sum_abs_payoff"] += abs(float(rec["payoff"]))
+                    tilt_train_agg["sum_effective_tau_used"] += float(rec["effective_tau_used"])
+                    row = {
+                        "phase": "training",
+                        "train_episode": episode,
+                        "br_traversal_index": int(br.iteration),
+                        **rec,
+                    }
+                    tilt_train_file.write(json.dumps(_jsonable(row)) + "\n")
 
                 env_train.reset()
                 cfr.traverse_tree(np.ones(env_train.num_players))
@@ -697,7 +832,7 @@ def run_experiment(
 
             row = {
                 "episode": episode,
-                "agent0_name": f"br_cfr_{spec.br_variant}",
+                "agent0_name": br_display,
                 "agent1_name": "standard_cfr",
                 "agent0_states_seen": len(br.average_policy),
                 "agent1_states_seen": len(cfr.average_policy),
@@ -739,11 +874,14 @@ def run_experiment(
 
             training_rows.append(row)
 
+        if tilt_train_file is not None:
+            tilt_train_file.close()
+
         br.save()
         cfr.save()
         model_paths = {"agent0_br_cfr": br_model_path, "agent1_cfr": cfr_model_path}
         eval_agents = [BRCFRWrapper(br), CFRWrapper(cfr)]
-        eval_names = [f"br_cfr_{spec.br_variant}", "standard_cfr"]
+        eval_names = [br_display, "standard_cfr"]
 
     elif spec.setup == "cfr_vs_cfr":
         p0_path = os.path.join(dirs["models"], f"{spec.name}_seed{seed}_cfr_player0.pkl")
@@ -820,12 +958,16 @@ def run_experiment(
     train_csv = os.path.join(dirs["root"], f"training_logs_{spec.name}_seed{seed}.csv")
     _save_csv(train_csv, training_rows)
 
+    if spec.setup == "br_vs_cfr" and tilt_eval_jsonl_path:
+        br.mood_tilt.reset()
+
     final_eval = _evaluate_with_bluff_stats(
         env_eval,
         eval_agents,
         eval_names,
         num_games=eval_games,
         checkpoint_interval_games=10_000,
+        eval_tilt_telemetry_jsonl=tilt_eval_jsonl_path,
     )
     final_eval["experiment"] = spec.name
     final_eval["seed"] = seed
@@ -852,7 +994,34 @@ def run_experiment(
     bluff_csv = os.path.join(dirs["root"], f"bluff_statistics_{spec.name}_seed{seed}.csv")
     _save_csv(bluff_csv, bluff_csv_rows)
 
-    return {
+    if tilt_summary_path:
+        nlog = int(tilt_train_agg.get("training_traversals_logged", 0))
+        if nlog > 0:
+            tilt_train_agg["fraction_tilt_active_before"] = (
+                tilt_train_agg["tilt_active_before_true"] / nlog
+            )
+            tilt_train_agg["mean_abs_payoff"] = tilt_train_agg["sum_abs_payoff"] / nlog
+            tilt_train_agg["mean_effective_tau_used"] = (
+                tilt_train_agg["sum_effective_tau_used"] / nlog
+            )
+        eval_agg = _aggregate_tilt_telemetry_jsonl(tilt_eval_jsonl_path or "")
+        _save_json(
+            tilt_summary_path,
+            {
+                "training_aggregate": tilt_train_agg,
+                "eval_aggregate": eval_agg,
+                "training_jsonl": tilt_train_jsonl_path,
+                "eval_jsonl": tilt_eval_jsonl_path,
+                "note": (
+                    "Each training line is one BR-CFR root traversal after register_hand_outcome; "
+                    "tilt_active_before / *_used describe modulation for that traversal. "
+                    "Each eval line is one completed game for seat 0 (BR-CFR). "
+                    "Mood/tilt counters were reset to neutral immediately before final evaluation."
+                ),
+            },
+        )
+
+    out: dict[str, Any] = {
         "experiment": spec.name,
         "result_dir": dirs["root"],
         "config_json": cfg_path,
@@ -862,6 +1031,13 @@ def run_experiment(
         "bluff_csv": bluff_csv,
         "model_paths": model_paths,
     }
+    if tilt_train_jsonl_path:
+        out["tilt_telemetry_training_jsonl"] = tilt_train_jsonl_path
+    if tilt_eval_jsonl_path:
+        out["tilt_telemetry_eval_jsonl"] = tilt_eval_jsonl_path
+    if tilt_summary_path:
+        out["tilt_telemetry_summary_json"] = tilt_summary_path
+    return out
 
 
 def parse_args() -> argparse.Namespace:

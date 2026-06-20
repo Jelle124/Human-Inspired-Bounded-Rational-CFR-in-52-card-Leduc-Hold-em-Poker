@@ -1,36 +1,11 @@
 """
 Configuration for Bounded-Rational CFR (BR-CFR) variants.
 
-This module is SEPARATE from the replication config (config.py). All BR-CFR
-outputs go to results/br_cfr/ to avoid polluting the original replication results.
-
-Parameter choices are motivated by bounded-rationality literature and the goal
-of creating "dumber" / more human-like CFR agents for ablation studies.
+Parameter presets and mood/tilt defaults. Thesis experiments use
+`br_cfr_variant_specs.BR_CFR_VARIANT_PARAM_TABLE` (Smart / Medium / Dumb).
 """
 
 import os
-
-# =============================================================================
-# PATH CONFIGURATION (all under results/br_cfr/ - separate from replication)
-# =============================================================================
-
-_BASE = os.environ.get(
-    "BLUFFING_RESULTS_DIR",
-    os.path.join(os.path.dirname(__file__), "results")
-)
-BR_CFR_BASE = os.path.join(_BASE, "br_cfr")
-BR_CFR_TRAIN_DIR = os.path.join(BR_CFR_BASE, "training")
-BR_CFR_EVAL_DIR = os.path.join(BR_CFR_BASE, "evaluation")
-
-# Training episodes for BR-CFR (can use fewer for quick ablation, same as replication for comparison)
-BR_CFR_TRAIN_EPISODES = int(os.environ.get("BR_CFR_TRAIN_EPISODES", "100000"))
-
-# Evaluation games when training BR-CFR
-BR_CFR_EVAL_GAMES = int(os.environ.get("BR_CFR_EVAL_GAMES", "100000"))
-
-# =============================================================================
-# BOUNDED-RATIONALITY PARAMETERS (with motivation)
-# =============================================================================
 
 
 # --- A) LIMITED COMPUTATION (fewer iterations) ---
@@ -134,6 +109,11 @@ MOOD_TILT_PARAM_DEFAULTS = {
     "tilt_loss_streak_k": 3,
     "tilt_shock_payoff": -6.0,
     "tilt_duration_hands": 5,
+    "tilt_trigger_probability": 1.0,
+    "tilt_mood_threshold": None,
+    "tilt_cooldown_hands": 0,
+    "tilt_refresh_while_active": True,
+    "tilt_reset_loss_streak_on_trigger": False,
     "tilt_tau_multiplier": 2.0,
     "tilt_min_soft_tau": 0.45,
     "tilt_raise_extra_logit": 0.60,
@@ -232,5 +212,5 @@ PRESETS = {
     },
 }
 
-# Which preset to use (overrides individual params when running train_br_cfr.py)
+# Legacy env override (unused by train_parallel_suite; kept for preset experiments).
 ACTIVE_PRESET = os.environ.get("BR_CFR_PRESET", "soft_regret")

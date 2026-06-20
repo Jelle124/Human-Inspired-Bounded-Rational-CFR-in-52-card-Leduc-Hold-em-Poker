@@ -1,0 +1,11 @@
+{
+  "experiment": "replication_dqn_vs_cfr",
+  "setup": "dqn_vs_cfr",
+  "seed": 42,
+  "train_episodes": 100000,
+  "eval_games": 100000,
+  "eval_interval": 10000,
+  "checkpoint_eval_games": 2000,
+  "deck_size": 50,
+  "state_dim": 156
+}

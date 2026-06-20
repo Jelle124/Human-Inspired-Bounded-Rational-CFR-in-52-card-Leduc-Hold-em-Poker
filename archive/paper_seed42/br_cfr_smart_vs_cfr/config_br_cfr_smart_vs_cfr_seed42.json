@@ -1,0 +1,21 @@
+{
+  "experiment": "br_cfr_smart_vs_cfr",
+  "setup": "br_vs_cfr",
+  "seed": 42,
+  "train_episodes": 100000,
+  "eval_games": 100000,
+  "eval_interval": 10000,
+  "checkpoint_eval_games": 2000,
+  "deck_size": 50,
+  "state_dim": 156,
+  "br_preset": {
+    "iterations_per_episode": 10,
+    "memory_decay": 1.0,
+    "soft_regret_tau": 0.0,
+    "bucket_mode": "none",
+    "qre_normalize_regrets": false,
+    "qre_norm_epsilon": 1e-08,
+    "mood_enabled": false,
+    "tilt_enabled": false
+  }
+}

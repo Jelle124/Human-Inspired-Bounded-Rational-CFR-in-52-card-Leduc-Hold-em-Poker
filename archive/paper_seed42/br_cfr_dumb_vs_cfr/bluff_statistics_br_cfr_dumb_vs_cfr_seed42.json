@@ -1,0 +1,147 @@
+{
+  "definition": {
+    "hand_score": "R_pc*4 + S_pc (+1000 if pair)",
+    "attempt_rule": "raise with HandScore <= 32",
+    "success_rule": "opponent folds immediately after the raise"
+  },
+  "total_bluff_attempts": 72706,
+  "successful_bluffs": 10734,
+  "bluff_counts_by_agent": {
+    "br_cfr_dumb": {
+      "attempts": 30393,
+      "successes": 128,
+      "attempt_rate": 0.16623730371002413,
+      "success_rate": 0.004211496068173593
+    },
+    "standard_cfr": {
+      "attempts": 42313,
+      "successes": 10606,
+      "attempt_rate": 0.31240448011340566,
+      "success_rate": 0.2506558268144542
+    }
+  },
+  "overall_bluff_attempt_rate": 0.2284398250552986,
+  "overall_bluff_success_rate": 0.14763568343740543,
+  "by_evaluation_checkpoint": [
+    {
+      "games": 10000,
+      "agent0_win_rate": 0.0569,
+      "agent1_win_rate": 0.9431,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.59055,
+      "agent1_avg_payoff": 1.59055,
+      "agent0_bluff_attempts": 3034,
+      "agent1_bluff_attempts": 4191,
+      "agent0_bluff_successes": 11,
+      "agent1_bluff_successes": 1047
+    },
+    {
+      "games": 20000,
+      "agent0_win_rate": 0.0606,
+      "agent1_win_rate": 0.9394,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.563775,
+      "agent1_avg_payoff": 1.563775,
+      "agent0_bluff_attempts": 6094,
+      "agent1_bluff_attempts": 8427,
+      "agent0_bluff_successes": 26,
+      "agent1_bluff_successes": 2115
+    },
+    {
+      "games": 30000,
+      "agent0_win_rate": 0.06096666666666667,
+      "agent1_win_rate": 0.9390333333333334,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.5661166666666666,
+      "agent1_avg_payoff": 1.5661166666666666,
+      "agent0_bluff_attempts": 9208,
+      "agent1_bluff_attempts": 12668,
+      "agent0_bluff_successes": 41,
+      "agent1_bluff_successes": 3174
+    },
+    {
+      "games": 40000,
+      "agent0_win_rate": 0.0615,
+      "agent1_win_rate": 0.9385,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.5636,
+      "agent1_avg_payoff": 1.5636,
+      "agent0_bluff_attempts": 12260,
+      "agent1_bluff_attempts": 16889,
+      "agent0_bluff_successes": 51,
+      "agent1_bluff_successes": 4214
+    },
+    {
+      "games": 50000,
+      "agent0_win_rate": 0.0613,
+      "agent1_win_rate": 0.9387,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.56594,
+      "agent1_avg_payoff": 1.56594,
+      "agent0_bluff_attempts": 15336,
+      "agent1_bluff_attempts": 21109,
+      "agent0_bluff_successes": 62,
+      "agent1_bluff_successes": 5246
+    },
+    {
+      "games": 60000,
+      "agent0_win_rate": 0.061116666666666666,
+      "agent1_win_rate": 0.9388833333333333,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.5647583333333333,
+      "agent1_avg_payoff": 1.5647583333333333,
+      "agent0_bluff_attempts": 18416,
+      "agent1_bluff_attempts": 25323,
+      "agent0_bluff_successes": 78,
+      "agent1_bluff_successes": 6325
+    },
+    {
+      "games": 70000,
+      "agent0_win_rate": 0.06107142857142857,
+      "agent1_win_rate": 0.9389285714285714,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.5659142857142858,
+      "agent1_avg_payoff": 1.5659142857142858,
+      "agent0_bluff_attempts": 21442,
+      "agent1_bluff_attempts": 29612,
+      "agent0_bluff_successes": 96,
+      "agent1_bluff_successes": 7389
+    },
+    {
+      "games": 80000,
+      "agent0_win_rate": 0.060875,
+      "agent1_win_rate": 0.939125,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.5681375,
+      "agent1_avg_payoff": 1.5681375,
+      "agent0_bluff_attempts": 24440,
+      "agent1_bluff_attempts": 33868,
+      "agent0_bluff_successes": 106,
+      "agent1_bluff_successes": 8456
+    },
+    {
+      "games": 90000,
+      "agent0_win_rate": 0.061422222222222225,
+      "agent1_win_rate": 0.9385777777777777,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.5638055555555554,
+      "agent1_avg_payoff": 1.5638055555555554,
+      "agent0_bluff_attempts": 27384,
+      "agent1_bluff_attempts": 38055,
+      "agent0_bluff_successes": 118,
+      "agent1_bluff_successes": 9508
+    },
+    {
+      "games": 100000,
+      "agent0_win_rate": 0.06131,
+      "agent1_win_rate": 0.93869,
+      "draw_rate": 0.0,
+      "agent0_avg_payoff": -1.56432,
+      "agent1_avg_payoff": 1.56432,
+      "agent0_bluff_attempts": 30393,
+      "agent1_bluff_attempts": 42313,
+      "agent0_bluff_successes": 128,
+      "agent1_bluff_successes": 10606
+    }
+  ]
+}
